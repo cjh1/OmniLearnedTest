@@ -34,7 +34,7 @@ class PET2(nn.Module):
                  mode = 'classifier',
                  num_classes = 2,
                  ):
-        super().__init__()        
+        super().__init__()
         self.mode = mode
         if self.mode not in ['classifier','generator','pretrain']:
             raise ValueError(f"Mode '{self.mode}' not supported.")
@@ -60,7 +60,7 @@ class PET2(nn.Module):
                              add_dim = add_dim,
                              cut = cut,
                              use_time = use_time)
-        
+
 
         self.classifier = None
         self.generator = None
@@ -73,7 +73,7 @@ class PET2(nn.Module):
                                              num_tokens = num_tokens,
                                              num_add = 1 if conditional else 0,
                                              num_classes = num_classes)
-            
+
         if self.mode == 'generator' or self.mode == 'pretrain':
             self.generator = PET_generator(input_dim,
                                            hidden_size,
@@ -89,20 +89,20 @@ class PET2(nn.Module):
                                            num_classes = num_classes)
         self.initialize_weights()
 
-    def initialize_weights(self):        
+    def initialize_weights(self):
         def _init_weights(m):
             if isinstance(m, nn.Linear):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
-                    
+
         self.apply(_init_weights)
-        
+
     @torch.jit.ignore
-    def no_weight_decay(self):        
+    def no_weight_decay(self):
         # Specify parameters that should not be decayed
         return {'norm'}
 
-               
+
     def forward(self, x, y, cond = None, pid = None, add_info = None):
         B = x.shape[0]
         mask = x[:,:,3:4]!=0
@@ -113,14 +113,14 @@ class PET2(nn.Module):
             z, v = perturb(x,mask,time)
             z_body = self.body(z,cond, pid, add_info, time)
             z_pred = self.generator(z_body,mask,y)
-            
+
         if self.mode == 'classifier' or self.mode == 'pretrain':
             x_body = self.body(x,cond, pid, add_info, torch.zeros_like(time))
             y_pred = self.classifier(x_body)
             if self.mode == 'pretrain':
                 y_perturb = self.classifier(z_body)
 
-                
+
         return y_pred,y_perturb,z_pred, v, x_body, z_body
 
 
@@ -143,24 +143,24 @@ class PET_classifier(nn.Module):
             MLP(hidden_size*(self.num_tokens + self.num_add),
                 int(mlp_ratio*num_tokens*hidden_size),
                 act_layer = act_layer,
-                drop=mlp_drop),            
+                drop=mlp_drop),
             nn.Linear((self.num_tokens + self.num_add)*hidden_size, num_classes))
 
         self.initialize_weights()
 
-    def initialize_weights(self):        
+    def initialize_weights(self):
         def _init_weights(m):
             if isinstance(m, nn.Linear):
                 if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)                    
+                    nn.init.constant_(m.bias, 0)
         self.apply(_init_weights)
 
-        
+
     @torch.jit.ignore
-    def no_weight_decay(self):        
+    def no_weight_decay(self):
         # Specify parameters that should not be decayed
         return {'norm'}
-               
+
     def forward(self, x):
         B = x.shape[0]
         return self.out(x[:,:self.num_tokens+ self.num_add].reshape(B,-1))
@@ -191,7 +191,7 @@ class PET_generator(nn.Module):
             MLP(hidden_size,
                 int(mlp_ratio*hidden_size),
                 act_layer = act_layer,
-                drop=mlp_drop),            
+                drop=mlp_drop),
             )
 
         self.in_blocks = nn.ModuleList([
@@ -212,24 +212,24 @@ class PET_generator(nn.Module):
             MLP(hidden_size,
                 int(mlp_ratio*hidden_size),
                 act_layer = act_layer,
-                drop=mlp_drop),            
+                drop=mlp_drop),
             nn.Linear(hidden_size, output_size))
 
         self.initialize_weights()
 
-    def initialize_weights(self):        
+    def initialize_weights(self):
         def _init_weights(m):
             if isinstance(m, nn.Linear):
                 if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)                    
+                    nn.init.constant_(m.bias, 0)
         self.apply(_init_weights)
 
-        
+
     @torch.jit.ignore
-    def no_weight_decay(self):        
+    def no_weight_decay(self):
         # Specify parameters that should not be decayed
         return {'norm'}
-               
+
     def forward(self, x, mask, y):
         B = x.shape[0]
         label_embed = self.pid_embed(y)
@@ -249,10 +249,10 @@ class PET_generator(nn.Module):
 
         for ib, blk in enumerate(self.in_blocks):
             x = x + blk(x,mask=mask)
-        
+
         return self.out(x[:,self.num_add:])*mask[:,self.num_add:]
 
-    
+
 class PET_body(nn.Module):
     def __init__(self,
                  input_dim,
@@ -292,7 +292,7 @@ class PET_body(nn.Module):
                                                  attn_drop=attn_drop,
                                                  norm_layer=norm_layer,K = K,
                                                  num_heads=num_heads,physics=True)
-        
+
         self.num_add = 0
         if self.conditional:
             self.cond_embed = MLP(in_features=cond_dim,
@@ -307,7 +307,7 @@ class PET_body(nn.Module):
                 nn.Embedding(pid_dim,hidden_size,padding_idx = 0),
                 NoScaleDropout(feature_drop)
             )
-                        
+
 
         if self.add_info:
             self.add_embed = nn.Sequential(
@@ -318,8 +318,8 @@ class PET_body(nn.Module):
                     act_layer=act_layer,
                     bias = False),
                 NoScaleDropout(feature_drop)
-            )   
-                        
+            )
+
 
         self.embed = InputBlock(in_features=input_dim,
                                 hidden_features=int(mlp_ratio*hidden_size),
@@ -336,7 +336,7 @@ class PET_body(nn.Module):
         self.num_tokens = num_tokens
         self.token = nn.Parameter(torch.zeros(1, self.num_tokens, hidden_size))
 
-        
+
         self.in_blocks = nn.ModuleList([
             AttBlock(dim=hidden_size,
                      num_heads=num_heads,
@@ -362,32 +362,32 @@ class PET_body(nn.Module):
                                    out_features = hidden_size,
                                    norm_layer = norm_layer,
                                    act_layer=act_layer,bias=False)
-            
+
         self.initialize_weights()
 
-    def initialize_weights(self):        
+    def initialize_weights(self):
         nn.init.trunc_normal_(self.token, mean=0.0, std=0.02, a=-2.0, b=2.0)
         def _init_weights(m):
             if isinstance(m, nn.Linear):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
-                    
+
         self.apply(_init_weights)
 
-        
+
     @torch.jit.ignore
-    def no_weight_decay(self):        
+    def no_weight_decay(self):
         # Specify parameters that should not be decayed
         return {'token','norm'}
 
-               
+
     def forward(self, x, cond = None, pid = None, add_info = None, time = None):
         B = x.shape[0]
         mask = x[:,:,3:4]!=0
         token = self.token.expand(B, -1, -1)
 
         x_embed, x = self.embed(x,cond,mask)
-        
+
         #Move away zero-padded entries
         coord_shift = 999.0 * (~mask).float()
         local_features, indices = self.local_physics(coord_shift +  x[:,:,:2], x, mask)
@@ -399,14 +399,14 @@ class PET_body(nn.Module):
             x_int = None
             x_glob = 0.
 
-        
+
         #Combine local + global info
         x = x_embed + local_features + x_glob
         #Add classification tokens
 
         if pid is not None and self.pid:
             #Encode the PID info
-            x = x + self.pid_embed(pid)*mask            
+            x = x + self.pid_embed(pid)*mask
         if add_info is not None and self.add_info:
             x = x + self.add_embed(add)*mask
 
@@ -433,6 +433,6 @@ class PET_body(nn.Module):
 
         for ib, blk in enumerate(self.in_blocks):
             x = x + blk(x,mask=mask, x_int = x_int)
-                                
+
         x = self.norm(x)*mask
         return x

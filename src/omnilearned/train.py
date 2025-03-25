@@ -46,7 +46,7 @@ def train_step(
         except StopIteration:
             data_iter = iter(dataloader)
             batch = next(data_iter)
-    
+
     #for batch_idx, batch in enumerate(dataloader):
         optimizer.zero_grad()  # Zero the gradients
         X, y = batch["X"].to(device, dtype=torch.float), batch["y"].to(device)
@@ -55,10 +55,10 @@ def train_step(
             for key in ["cond", "pid", "add_info"]
             if key in batch
         }
-        
-        
+
+
         y_pred,y_perturb,z_pred, v, x_body, z_body = model(X,y, **model_kwargs)
-        
+
         loss = 0
         if y_pred is not None:
             loss_class = class_cost(y_pred.squeeze(), y)
@@ -69,7 +69,7 @@ def train_step(
             loss = loss + loss_gen
             logs['loss_gen'] += loss_gen.detach()
         if y_perturb is not None:
-            loss_perturb = class_cost(y_perturb.squeeze(), y) 
+            loss_perturb = class_cost(y_perturb.squeeze(), y)
             loss = loss + loss_perturb
             logs['loss_perturb'] += loss_perturb.detach()
         if use_clip and z_body is not None and x_body is not None:
@@ -79,14 +79,14 @@ def train_step(
 
         logs['loss'] += loss.detach()
         loss.backward()  # Backward pass
-        optimizer.step()  # Update parameters        
+        optimizer.step()  # Update parameters
         scheduler.step()
 
     if dist.is_initialized():
         for key in logs:
             dist.all_reduce(logs[key].detach())
             logs[key] = float(logs[key]/dist.get_world_size()/len(dataloader))
-            
+
     return logs
 
 def test_step(model,
@@ -119,7 +119,7 @@ def test_step(model,
         except StopIteration:
             data_iter = iter(dataloader)
             batch = next(data_iter)
-    
+
     #for batch_idx, batch in enumerate(dataloader):
         X, y = batch["X"].to(device, dtype=torch.float), batch["y"].to(device)
         model_kwargs = {
@@ -143,7 +143,7 @@ def test_step(model,
             loss_perturb = class_cost(y_perturb.squeeze(), y)
             loss = loss + loss_perturb
             logs['loss_perturb'] += loss_perturb.detach()
-            
+
         if use_clip and z_body is not None and x_body is not None:
             loss_clip = clip_loss(x_body.view(X.shape[0],-1),z_body.view(X.shape[0],-1))
             loss = loss + loss_clip
@@ -172,13 +172,13 @@ def train_model(model,
                 save_tag="",
                 iterations_per_epoch = -1):
 
-    
+
 
     checkpoint_name = f"best_model_{save_tag}.pt"
-    
+
     losses = {"train_loss": [],
               "val_loss": [],}
-   
+
     tracker = {"bestValLoss": np.inf,
                "bestEpoch": 0}
 
@@ -188,12 +188,12 @@ def train_model(model,
         if is_master_node(): print(f"Loading checkpoint from {os.path.join(output_dir,checkpoint_name)}")
         epoch_init, tracker["bestValLoss"] = restore_checkpoint(model,optimizer,lr_scheduler,
                                                                 output_dir,checkpoint_name,device)
-        
-        
+
+
     for epoch in range(int(epoch_init),num_epochs):
         train_loader.sampler.set_epoch(epoch)
 
-        start = time.time()        
+        start = time.time()
         train_logs = train_step(model,train_loader,
                                 loss_class,loss_gen,
                                 optimizer,lr_scheduler,
@@ -204,7 +204,7 @@ def train_model(model,
                              loss_class, loss_gen,
                              epoch, device,use_clip=use_clip,
                              iterations_per_epoch = iterations_per_epoch)
-        
+
         losses["train_loss"].append(train_logs['loss'])
         losses["val_loss"].append(val_logs['loss'])
 
@@ -222,16 +222,16 @@ def train_model(model,
             print("replacing best checkpoint ...")
             tracker["bestValLoss"] = losses["val_loss"][-1]
             save_checkpoint(model,epoch+1,optimizer,
-                            losses["val_loss"][-1],                            
+                            losses["val_loss"][-1],
                             lr_scheduler,output_dir,
                             checkpoint_name)
-                                
+
         if epoch - tracker["bestEpoch"] > patience:
             print(f"breaking on device: {device}")
             break
-        
+
     if is_master_node():
-        print(f"Training Complete, best loss: {tracker['bestValLoss']:.5f} at epoch {tracker['bestEpoch']}!")                
+        print(f"Training Complete, best loss: {tracker['bestValLoss']:.5f} at epoch {tracker['bestEpoch']}!")
         # save losses
         json.dump(losses, open(f"{output_dir}/training_{save_tag}.json", "w"))
 
@@ -251,16 +251,16 @@ def save_checkpoint(model,
         'loss':loss,
         'sched': lr_scheduler.state_dict(),
     }
-    
+
     if model.module.classifier is not None:
         save_dict['classifier_head'] = model.module.classifier.state_dict()
 
     if model.module.generator is not None:
         save_dict['generator_head'] = model.module.generator.state_dict()
-    
+
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
-        
+
     torch.save(save_dict, os.path.join(checkpoint_dir,checkpoint_name))
     print(f"Epoch {epoch} | Training checkpoint saved at {os.path.join(checkpoint_dir,checkpoint_name)}")
 
@@ -279,8 +279,8 @@ def restore_checkpoint(model,
 
     if model.module.generator is not None:
         model.module.generator.load_state_dict(checkpoint["generator_head"], strict=False)
-    
-            
+
+
     startEpoch = checkpoint['epoch'] + 1
     best_loss = checkpoint['loss']
     try:
