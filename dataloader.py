@@ -195,7 +195,7 @@ def load_data(dataset_name,path,
         raise ValueError(f"Dataset '{dataset_name}' not supported. Choose from {supported_datasets}.")
 
     if dataset_name == 'pretrain':
-        names = ['atlas','aspen', 'jetclass', 'jetclass2', 'h1']
+        names = ['atlas','aspen', 'jetclass',  'h1']
     else:
         names = [dataset_name]
         

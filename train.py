@@ -23,6 +23,7 @@ def train_step(
         device,
         clip_loss = CLIPLoss(),
         use_clip = False,
+        iterations_per_epoch = -1,
 ):
     model.train()
 
@@ -33,9 +34,20 @@ def train_step(
     logs['loss_gen'] = logs_buff[2].view(-1)
     logs['loss_perturb'] = logs_buff[3].view(-1)
     logs['loss_clip'] = logs_buff[4].view(-1)
-    
 
-    for batch_idx, batch in enumerate(dataloader):
+    if iterations_per_epoch < 0:
+        iterations_per_epoch = len(dataloader)
+
+    data_iter = iter(dataloader)
+
+    for batch_idx in range(iterations_per_epoch):
+        try:
+            batch = next(data_iter)
+        except StopIteration:
+            data_iter = iter(dataloader)
+            batch = next(data_iter)
+    
+    #for batch_idx, batch in enumerate(dataloader):
         optimizer.zero_grad()  # Zero the gradients
         X, y = batch["X"].to(device, dtype=torch.float), batch["y"].to(device)
         model_kwargs = {
@@ -84,7 +96,8 @@ def test_step(model,
               epoch,
               device,
               clip_loss = CLIPLoss(),
-              use_clip=False):
+              use_clip=False,
+              iterations_per_epoch = -1,):
     model.eval()
 
     logs_buff = torch.zeros((5), dtype=torch.float32, device=device)
@@ -95,8 +108,19 @@ def test_step(model,
     logs['loss_perturb'] = logs_buff[3].view(-1)
     logs['loss_clip'] = logs_buff[4].view(-1)
 
+    if iterations_per_epoch < 0:
+        iterations_per_epoch = len(dataloader)
+
+    data_iter = iter(dataloader)
+
+    for batch_idx in range(iterations_per_epoch):
+        try:
+            batch = next(data_iter)
+        except StopIteration:
+            data_iter = iter(dataloader)
+            batch = next(data_iter)
     
-    for batch_idx, batch in enumerate(dataloader):
+    #for batch_idx, batch in enumerate(dataloader):
         X, y = batch["X"].to(device, dtype=torch.float), batch["y"].to(device)
         model_kwargs = {
             key: (batch[key].to(device) if batch[key] is not None else None)
@@ -145,7 +169,8 @@ def train_model(model,
                 loss_gen = nn.L1Loss(),
                 use_clip=True,
                 output_dir="",
-                save_tag=""):
+                save_tag="",
+                iterations_per_epoch = -1):
 
     
 
@@ -173,10 +198,12 @@ def train_model(model,
                                 loss_class,loss_gen,
                                 optimizer,lr_scheduler,
                                 epoch,device,
-                                use_clip = use_clip)
+                                use_clip = use_clip,
+                                iterations_per_epoch = iterations_per_epoch)
         val_logs = test_step(model, test_loader,
                              loss_class, loss_gen,
-                             epoch, device,use_clip=use_clip)
+                             epoch, device,use_clip=use_clip,
+                             iterations_per_epoch = iterations_per_epoch)
         
         losses["train_loss"].append(train_logs['loss'])
         losses["val_loss"].append(val_logs['loss'])
@@ -324,7 +351,8 @@ def main(args=None):
                 device=local_rank, 
                 output_dir=args.outdir, 
                 save_tag=args.save_tag,
-                use_clip = args.use_clip
+                use_clip = args.use_clip,
+                iterations_per_epoch = args.iterations
                 )
 
 
@@ -348,7 +376,8 @@ if __name__ == '__main__':
 
 
     #Training options
-    parser.add_argument("--batch",default=64,type = int,help="Batch size",)    
+    parser.add_argument("--batch",default=64,type = int,help="Batch size",)
+    parser.add_argument("--iterations",default=-1,type = int,help="Number of iterations per pass")    
     parser.add_argument("--epoch",default=15,type = int,help="Number of epochs")
 
     #Optimizer
