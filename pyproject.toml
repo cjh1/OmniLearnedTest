@@ -1,0 +1,78 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "omnilearned"
+description = "OmniLearned: A unified deep learning approach for particle physics"
+dynamic = ["version"]
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Vinicius Mikuni", email = "vmikuni@gmail.com"},
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.5.1",
+    "numpy>=2.2.4",
+    "h5py>=3.13.0",
+    "scikit-learn>=1.6.1",
+    "einops>=0.8.1",
+    "requests>=2.32.3",
+    "pytorch_optimizer>=3.5.0"
+
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=22.0.0",
+    "isort>=5.10.0",
+    "flake8>=4.0.0",
+    "hatch-vcs>=0.3.0",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/ViniciusMikuni/OmniLearned"
+"Bug Tracker" = "https://github.com/ViniciusMikuni/OmniLearned/issues"
+
+# Hatch configuration
+[tool.hatch]
+version.source = "vcs"
+
+# Configure the VCS plugin
+[tool.hatch.version.raw-options]
+local_scheme = "node-and-date"
+version_scheme = "no-guess-dev"
+fallback_version = "0.0.0"
+
+# Configure where to write the version file
+[tool.hatch.build.hooks.vcs]
+version-file = "src/omnilearned/_version.py"
+
+# Configure package discovery
+[tool.hatch.build.targets.wheel]
+packages = ["src/omnilearned"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/omnilearned",
+    "README.md",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py38"]
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
