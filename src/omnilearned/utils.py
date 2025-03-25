@@ -6,7 +6,7 @@ import torch.nn as nn
 from argparse import ArgumentParser
 from typing import Tuple
 
-from network import PET2
+from omnilearned.network import PET2
 import torch.distributed as dist
 from torch.distributed import init_process_group, destroy_process_group, get_rank
 import torch.nn.functional as F
@@ -15,7 +15,7 @@ def print_metrics(y_preds, y, thresholds=[0.3,0.5],background_class=0):
 
     y_preds_np = F.softmax(y_preds,-1).detach().cpu().numpy()
     y_np = y.detach().cpu().numpy()
-    
+
     # Compute multiclass AUC
     auc_ovo = metrics.roc_auc_score(y_np, y_preds_np if y_preds_np.shape[-1]>2 else np.argmax(y_preds_np,-1), multi_class='ovo')
     print(f"AUC: {auc_ovo:.4f}\n")
@@ -55,7 +55,7 @@ class CLIPLoss(nn.Module):
         perturbed_features = F.normalize(perturbed_features, dim=-1, eps=1e-3)
 
         # Calculate the logits for the image and spectrum features
-        
+
         logits_per_clean = logit_scale * clean_features @ perturbed_features.T
         return logits_per_clean, logits_per_clean.T
 
@@ -80,9 +80,9 @@ class CLIPLoss(nn.Module):
             + F.cross_entropy(logits_per_perturbed, labels)
         ) / 2
         return {"contrastive_loss": total_loss} if output_dict else total_loss
-    
 
-            
+
+
 
 def sum_reduce(num, device):
     r''' Sum the tensor across the devices.
@@ -98,7 +98,7 @@ def sum_reduce(num, device):
 def get_param_groups(model,wd):
     no_decay = []
     decay = []
-        
+
     for name, param in model.named_parameters():
         if any(keyword in name for keyword in model.no_weight_decay()):
             no_decay.append(param)  # Exclude from weight decay
@@ -113,7 +113,7 @@ def get_param_groups(model,wd):
     return param_groups
 
 
-        
+
 def is_master_node():
     if 'RANK' in os.environ:
         return int(os.environ['RANK']) == 0
@@ -133,14 +133,12 @@ def ddp_setup():
         init_process_group(backend="nccl", rank=0, world_size=1)
         rank = local_rank = 0
     else:
-        init_process_group(backend="nccl", 
+        init_process_group(backend="nccl",
                            init_method='env://')
         #overwrite variables with correct values from env
         local_rank = int(os.environ["LOCAL_RANK"])
         rank = get_rank()
-    
+
     torch.cuda.set_device(local_rank)
     torch.backends.cudnn.benchmark = True
     return local_rank, rank
-
-        
