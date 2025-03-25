@@ -3,8 +3,8 @@ import torch.nn as nn
 import einops
 import numpy as np
 
-from layers import NoScaleDropout, RMSNorm, InteractionBlock, LocalEmbeddingBlock, MLP, AttBlock, DynamicTanh, InputBlock
-from diffusion import MPFourier, get_logsnr_alpha_sigma, perturb
+from omnilearned.layers import NoScaleDropout, RMSNorm, InteractionBlock, LocalEmbeddingBlock, MLP, AttBlock, DynamicTanh, InputBlock
+from omnilearned.diffusion import MPFourier, get_logsnr_alpha_sigma, perturb
 
 
 

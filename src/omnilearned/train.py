@@ -3,12 +3,12 @@ import numpy as np
 import torch
 import torch.nn as nn
 from argparse import ArgumentParser
-from network import PET2
-from dataloader import load_data
+from omnilearned.network import PET2
+from omnilearned.dataloader import load_data
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from pytorch_optimizer import Lion
-from utils import print_metrics, sum_reduce, is_master_node, ddp_setup,get_param_groups, CLIPLoss
+from omnilearned.utils import print_metrics, sum_reduce, is_master_node, ddp_setup,get_param_groups, CLIPLoss
 import torch.nn.functional as F  # Keep this for function calls
 import time, sys, os
 
@@ -290,113 +290,97 @@ def restore_checkpoint(model,
     lr_scheduler.load_state_dict(checkpoint['sched'])
     return startEpoch, best_loss
 
-def main(args=None):
+def run(outdir: str = "",
+        save_tag: str = "",
+        dataset: str = "top",
+        path: str = "/pscratch/sd/v/vmikuni/PET/datasets",
+        use_pid: bool = False,
+        use_add: bool = False,
+        use_clip: bool = False,
+        num_classes: int = 2,
+        mode: str = "classifier",
+        batch: int = 64,
+        iterations: int = -1,
+        epoch: int = 15,
+        b1: float = 0.95,
+        b2: float = 0.98,
+        lr: float = 5e-4,
+        wd: float = 0.3,
+        num_transf: int = 6,
+        num_tokens: int = 4,
+        num_head: int = 8,
+        K: int = 15,
+        radius: int = 0.4,
+        base_dim: int = 64,
+        mlp_ratio: int = 2,
+        attn_drop: float = 0.1,
+        mlp_drop: float = 0.1,
+        feature_drop: float = 0.0):
+
     local_rank,rank = ddp_setup()
 
     # set up model
     model = PET2(input_dim=4,
-                 hidden_size=args.base_dim,
-                 num_transformers = args.num_transf,
-                 num_heads = args.num_head,
-                 attn_drop = args.attn_drop,
-                 mlp_drop = args.mlp_drop,
-                 mlp_ratio=args.mlp_ratio,
-                 feature_drop = args.feature_drop,
-                 num_tokens = args.num_tokens,
-                 K = args.K,
-                 cut=args.radius,
+                 hidden_size=base_dim,
+                 num_transformers = num_transf,
+                 num_heads = num_head,
+                 attn_drop = attn_drop,
+                 mlp_drop = mlp_drop,
+                 mlp_ratio=mlp_ratio,
+                 feature_drop = feature_drop,
+                 num_tokens = num_tokens,
+                 K = K,
+                 cut=radius,
                  conditional = True,
                  use_time=True,
-                 pid = args.use_pid,
-                 num_classes = args.num_classes,
-                 mode = args.mode)
+                 pid = use_pid,
+                 num_classes = num_classes,
+                 mode = mode)
 
     if rank==0:
         print('**** Setup ****')
         print('Total params: %.2fM' % (sum(p.numel() for p in model.parameters())/1000000.0))
         print('************')
 
-    param_groups = get_param_groups(model,args.wd)
+    param_groups = get_param_groups(model,wd)
     model = DDP(model.to(local_rank), device_ids=[local_rank],
                 #find_unused_parameters=True
                 )
-    optimizer = Lion(param_groups, lr=args.lr,betas=(args.b1,args.b2))
+    optimizer = Lion(param_groups, lr=lr,betas=(b1, b2))
 
     if rank==0:
         d = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         print(f"Training on device: {d}")
 
     # load in train data
-    train_loader = load_data(args.dataset,dataset_type='train',
-                             use_pid = args.use_pid,                             
-                             use_add = args.use_add,
-                             path=args.path,
-                             batch = args.batch)
+    train_loader = load_data(dataset,dataset_type='train',
+                             use_pid = use_pid,
+                             use_add = use_add,
+                             path=path,
+                             batch = batch)
     if rank==0:
         print('**** Setup ****')
         print(f'Train dataset len: {len(train_loader)}')
         print('************')
 
-    test_loader = load_data(args.dataset,dataset_type='test',
-                            use_pid = args.use_pid,
-                            use_add = args.use_add,
-                            path=args.path,
-                            batch = args.batch)
+    test_loader = load_data(dataset,dataset_type='test',
+                            use_pid = use_pid,
+                            use_add = use_add,
+                            path=path,
+                            batch = batch)
 
-    train_model(model, 
-                train_loader, 
-                test_loader, 
+    train_model(model,
+                train_loader,
+                test_loader,
                 optimizer,
-                num_epochs = args.epoch,
-                device=local_rank, 
-                output_dir=args.outdir, 
-                save_tag=args.save_tag,
-                use_clip = args.use_clip,
-                iterations_per_epoch = args.iterations
+                num_epochs = epoch,
+                device=local_rank,
+                output_dir=outdir,
+                save_tag=save_tag,
+                use_clip = use_clip,
+                iterations_per_epoch = iterations
                 )
 
 
     #destroy_process_group()
 
-if __name__ == '__main__':
-    parser = ArgumentParser()
-
-    #General Options
-    parser.add_argument("-o","--output_dir",dest="outdir",default="",help="Directory to output best model",)
-    parser.add_argument("--save_tag",dest="save_tag",default="",help="Extra tag for checkpoint model",)
-    parser.add_argument("--dataset",default="top",help="Dataset to load")
-    parser.add_argument("--path",default="/pscratch/sd/v/vmikuni/PET/datasets",help="Dataset path")
-
-    #Model Options
-    parser.add_argument("--use_pid", action='store_true', default=False, help='Use particle ID for training')
-    parser.add_argument("--use_add", action='store_true', default=False, help='Use additional features beyond kinematic information')
-    parser.add_argument("--use_clip", action='store_true', default=False, help='Use CLIP loss during training')
-    parser.add_argument("--num_classes",default=2,type = int,help="Number of classes in the classification task")
-    parser.add_argument("--mode",default="classifier",help="Task to run: classifier, generator, pretrain")
-
-
-    #Training options
-    parser.add_argument("--batch",default=64,type = int,help="Batch size",)
-    parser.add_argument("--iterations",default=-1,type = int,help="Number of iterations per pass")    
-    parser.add_argument("--epoch",default=15,type = int,help="Number of epochs")
-
-    #Optimizer
-    parser.add_argument("--b1",default=0.95, type = float,help="Lion b1")
-    parser.add_argument("--b2",default=0.98,type = float,help="Lion b2")
-    parser.add_argument("--lr",default=5e-4,type = float,help="Learning rate")
-    parser.add_argument("--wd",default=0.3,type = float,help="Weight decay")
-
-    #Model
-    parser.add_argument("--num_transf",default=6,type = int,help="Number of transformer blocks")
-    parser.add_argument("--num_tokens",default=4,type = int,help="Number of trainable tokens")
-    parser.add_argument("--num_head",default=8,type = int,help="Number of transformer heads")
-    parser.add_argument("--K",default=15,type = int,help="Number of nearest neighbors")
-    parser.add_argument("--radius",default=0.4,type = int,help="Local neighborhood radius")
-    parser.add_argument("--base_dim",default=64,type = int,help="Base value for dimensions")
-    parser.add_argument("--mlp_ratio",default=2,type = int,help="Multiplier for MLP layers")
-    parser.add_argument("--attn_drop",default=0.1,type = float,help="Dropout for attention layers")
-    parser.add_argument("--mlp_drop",default=0.1,type = float,help="Dropout for mlp layers")
-    parser.add_argument("--feature_drop",default=0.0,type = float,help="Dropout for input features")
-
-    args = parser.parse_args()
-    main(args)
