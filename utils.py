@@ -4,24 +4,85 @@ import numpy as np
 import torch
 import torch.nn as nn
 from argparse import ArgumentParser
+from typing import Tuple
 
 from network import PET2
 import torch.distributed as dist
 from torch.distributed import init_process_group, destroy_process_group, get_rank
+import torch.nn.functional as F
 
+def print_metrics(y_preds, y, thresholds=[0.3,0.5],background_class=0):
 
-def print_metrics(y_pred, y, thresholds=[0.3,0.5]):
-    y = y.cpu().detach().numpy()[:,1]
-    y_pred = nn.functional.softmax(y_pred,-1).cpu().detach().numpy()[:,1]
-    print("AUC: {}".format(metrics.roc_auc_score(y, y_pred)))
-    print('Acc: {}'.format(metrics.accuracy_score(y,y_pred>0.5)))
+    y_preds_np = F.softmax(y_preds,-1).detach().cpu().numpy()
+    y_np = y.detach().cpu().numpy()
+    
+    # Compute multiclass AUC
+    auc_ovo = metrics.roc_auc_score(y_np, y_preds_np if y_preds_np.shape[-1]>2 else np.argmax(y_preds_np,-1), multi_class='ovo')
+    print(f"AUC: {auc_ovo:.4f}\n")
+
+    num_classes = y_preds.shape[1]
+
+    for signal_class in range(num_classes):
+        if signal_class == background_class:
+            continue
+
+        # Create binary labels: 1 for signal_class, 0 for background_class, ignore others
+        mask = (y_np == signal_class) | (y_np == background_class)
+        y_bin = (y_np[mask] == signal_class).astype(int)
+        scores_bin = y_preds_np[mask, signal_class]/(y_preds_np[mask, signal_class] + y_preds_np[mask, background_class])
+
+        # Compute ROC
+        fpr, tpr, _ = metrics.roc_curve(y_bin, scores_bin)
+
+        print(f"Signal class {signal_class} vs Background class {background_class}:")
+
+        for threshold in thresholds:
+            bineff = np.argmax(tpr>threshold)
+            print('Class {} effS at {} 1.0/effB = {}'.format(signal_class,tpr[bineff],1.0/fpr[bineff]))
+
+class CLIPLoss(nn.Module):
+    #From AstroCLIP: https://github.com/PolymathicAI/AstroCLIP/blob/main/astroclip/models/astroclip.py#L117
+    def get_logits(
+            self,
+            clean_features: torch.FloatTensor,
+            perturbed_features: torch.FloatTensor,
+            logit_scale: float,
+    ) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
+        # Normalize image features
+        clean_features = F.normalize(clean_features, dim=-1, eps=1e-3)
+
+        # Normalize spectrum features
+        perturbed_features = F.normalize(perturbed_features, dim=-1, eps=1e-3)
+
+        # Calculate the logits for the image and spectrum features
         
-    fpr, tpr, _ = metrics.roc_curve(y, y_pred)
+        logits_per_clean = logit_scale * clean_features @ perturbed_features.T
+        return logits_per_clean, logits_per_clean.T
 
-    for threshold in thresholds:
-        bineff = np.argmax(tpr>threshold)
-        print('effS at {} 1.0/effB = {}'.format(tpr[bineff],1.0/fpr[bineff]))
+    def forward(
+        self,
+        clean_features: torch.FloatTensor,
+        perturbed_features: torch.FloatTensor,
+        logit_scale: float = 2.74,
+        output_dict: bool = False,
+    ) -> torch.FloatTensor:
+        # Get the logits for the clean and perturbed features
+        logits_per_clean, logits_per_perturbed = self.get_logits(
+            clean_features, perturbed_features, logit_scale
+        )
 
+        # Calculate the contrastive loss
+        labels = torch.arange(
+            logits_per_clean.shape[0], device=clean_features.device, dtype=torch.long
+        )
+        total_loss = (
+            F.cross_entropy(logits_per_clean, labels)
+            + F.cross_entropy(logits_per_perturbed, labels)
+        ) / 2
+        return {"contrastive_loss": total_loss} if output_dict else total_loss
+    
+
+            
 
 def sum_reduce(num, device):
     r''' Sum the tensor across the devices.

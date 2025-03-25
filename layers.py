@@ -342,7 +342,7 @@ def modulate(x, shift, scale, mask=None):
     else:
         return x
 
-    
+
 
 class AttBlock(nn.Module):
     def __init__(self, dim, num_heads, mlp_ratio=4.,

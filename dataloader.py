@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import h5py
+from argparse import ArgumentParser
 from torch.utils.data import Dataset, DataLoader
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -74,15 +75,14 @@ def collate_point_cloud(batch):
 
 def get_url(dataset_name,dataset_type,
             base_url = "https://portal.nersc.gov/cfs/m4567/"):
-    urls = {
-        'top': f'{base_url}/top/{dataset_type}/',
-        'qg': f'{base_url}/qg/{dataset_type}/',
-        #'jetclass':    'https://zenodo.org/record/XXXX/files/jetclass.hdf5?download=1',
-        #'jetnet':      'https://zenodo.org/record/XXXX/files/jetnet.hdf5?download=1'
-    }
     
-    return urls.get(dataset_name)
-
+    url = f'{base_url}/{dataset_name}/{dataset_type}/'
+    try:
+        response = requests.head(url, allow_redirects=True, timeout=5)
+        return url
+    except requests.RequestException:
+        return None
+    
 def download_h5_files(base_url, destination_folder):
     """
     Downloads all .h5 files from the specified directory URL.
@@ -113,13 +113,12 @@ def download_h5_files(base_url, destination_folder):
         print(f"Downloaded {file_name}")
 
 class HEPDataset(Dataset):
-    def __init__(self, file_paths, base_path,
+    def __init__(self, file_paths, 
                  use_pid = False, pid_idx = -1,
                  use_add = False,num_add = 4):
         """
         Args:
             file_paths (list): List of file paths.
-            base_path (str): Prefix for the folder containing files.
             use_pid (bool): Flag to select if PID information is used during training
             use_add (bool): Flags to select if additional information besides kinematics are used
         """
@@ -128,69 +127,95 @@ class HEPDataset(Dataset):
         self.pid_idx = pid_idx
         self.num_add = num_add
         
-        self.base_path = base_path
         self.file_paths = file_paths
         self.file_indices = []  # [(file_index, sample_index), ...]
+        self._file_cache = {}  # lazy cache for open h5py.File handles
 
         # Precompute indices for efficient access
         for file_idx, path in enumerate(self.file_paths):
-            with h5py.File(os.path.join(base_path,path), 'r') as f:
-                num_samples = len(f['data'])
-                self.file_indices.extend([(file_idx, i) for i in range(num_samples)])
-
+            try:
+                with h5py.File(path, 'r') as f:
+                    num_samples = len(f['data'])
+                    self.file_indices.extend([(file_idx, i) for i in range(num_samples)])
+            except Exception as e:
+                print(f"ERROR: File {path} is likely corrupted: {e}")
+                
         random.shuffle(self.file_indices)  # Shuffle data entries globally
 
     def __len__(self):
         return len(self.file_indices)
 
+    def _get_file(self, file_idx):
+        # Get the file handle from cache; open it if it’s not already open.
+        if file_idx not in self._file_cache:
+            file_path = self.file_paths[file_idx]
+            self._file_cache[file_idx] = h5py.File(file_path, 'r')
+        return self._file_cache[file_idx]
+
     def __getitem__(self, idx):
         file_idx, sample_idx = self.file_indices[idx]
-        file_path = self.file_paths[file_idx]
+        f = self._get_file(file_idx)
+        
         sample = {}
-        with h5py.File(os.path.join(self.base_path,file_path), 'r') as f:
-            sample['X'] = torch.tensor(f['data'][sample_idx], dtype=torch.float32)
-            label = f['pid'][sample_idx]
-            if label.ndim == 0:
-                sample['y'] = torch.tensor(label, dtype=torch.int64)
-                sample['y'] = torch.nn.functional.one_hot(sample['y'], num_classes=2).float()
-            else:
-                sample['y'] = torch.tensor(label, dtype=torch.float)            
-            
-            if 'global' in f:
-                sample['cond'] = torch.tensor(f['global'][sample_idx], dtype=torch.float32)
+
+        sample['X'] = torch.tensor(f['data'][sample_idx], dtype=torch.float32)
+        label = f['pid'][sample_idx]
+        sample['y'] = torch.tensor(label, dtype=torch.int64)
+        
+        if 'global' in f:
+            sample['cond'] = torch.tensor(f['global'][sample_idx], dtype=torch.float32)
+
             
         if self.use_pid:
             sample['pid'] = sample['X'][:,self.pid_idx].int()
-            sample['X'] = np.delete(sample['X'], self.pid_idx, axis=-1)
+            sample['X'] = torch.cat((sample['X'][:, :self.pid_idx], sample['X'][:, self.pid_idx+1:]), dim=1)
         if self.use_add:
             #Assume any additional info appears last
             sample['add_info'] = sample['X'][:,-self.num_add:]
-            sample['X'] = sample['X'][:,:sample['X'].shape[-1] - self.num_add]
-
+            sample['X'] = sample['X'][:,:-self.num_add]
         return sample 
 
+    def __del__(self):
+        # Clean up: close all cached file handles.
+        for f in self._file_cache.values():
+            try:
+                f.close()
+            except Exception as e:
+                print(f"Error closing file: {e}")
         
-def load_data(dataset_name,path,batch,
+def load_data(dataset_name,path,
+              batch = 100,
               dataset_type = 'train',
               distributed = True,
-              use_pid=False, pid_idx = -1,
+              use_pid=False, pid_idx = 4,
               use_add = False,num_add = 4):
     
-    supported_datasets = ['top', 'qg', 'jetclass', 'jetnet']
+    supported_datasets = ['top', 'qg', 'pretrain', 'atlas','aspen', 'jetclass', 'jetclass2', 'h1']
     if dataset_name not in supported_datasets:
         raise ValueError(f"Dataset '{dataset_name}' not supported. Choose from {supported_datasets}.")
-    dataset_path = os.path.join(path,dataset_name,dataset_type)
-    
-    if not os.path.exists(dataset_path):
-        os.makedirs(dataset_path)
-        
-    if not os.listdir(dataset_path):
-        url = get_url(dataset_name,dataset_type)
-        if url is None:
-            raise ValueError(f"No download URL found for dataset '{dataset_name}'.")
-        download_h5_files(url, dataset_path)
 
-    data = HEPDataset(os.listdir(dataset_path),dataset_path,
+    if dataset_name == 'pretrain':
+        names = ['atlas','aspen', 'jetclass', 'jetclass2', 'h1']
+    else:
+        names = [dataset_name]
+        
+    dataset_paths = [os.path.join(path,name,dataset_type) for name in names]
+    
+    file_list = []
+    for iname, dataset_path in enumerate(dataset_paths):
+        if not os.path.exists(dataset_path):
+            os.makedirs(dataset_path)
+
+        if not os.listdir(dataset_path):        
+            print(f"Fetching download url for dataset {names[iname]}")
+            url = get_url(names[iname],dataset_type)
+            if url is None:
+                raise ValueError(f"No download URL found for dataset '{dataset_name}'.")
+            download_h5_files(url, dataset_path)
+            
+        file_list += [os.path.join(dataset_path, f) for f in os.listdir(dataset_path) if os.path.isfile(os.path.join(dataset_path, f))]
+
+    data = HEPDataset(file_list,
                       use_pid=use_pid, pid_idx = pid_idx,
                       use_add = use_add,num_add = num_add)
 
@@ -204,4 +229,10 @@ def load_data(dataset_name,path,batch,
     return loader
 
 if __name__ == '__main__':
-    load_data('top','./',100,dataset_type = 'test')
+    parser = ArgumentParser()
+    parser.add_argument("-d","--dataset",default="top",help="Dataset name to download",)
+    parser.add_argument("-f","--folder",default="./",help="Folder to save the dataset",)
+    args = parser.parse_args()
+
+    for tag in ['train','test','val']:           
+        load_data(args.dataset,args.folder,dataset_type = tag, distributed=False)

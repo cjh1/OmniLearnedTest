@@ -1,8 +1,27 @@
 # OmniLearn v2 Repository
 
+## Data
+
+A few standard datasets can be directly downloaded using the command:
+
+```bash
+python dataloader.py -d DATASET -f OUTPUT/PATH 
+```
+Datasets available are: top/qg/aspen/atlas/jetclass/h1
+If ```--d pretrain``` is used instead, aspen, atlas, jetclass, and h1 datasets will be downloaded. The total size of the pretrain dataset is around 4T so be sure to have enough space available.
+
+
 ## Training:
 
-The training using multiple GPUs can be accomplished using the following command
+Single GPU training can be started using:
+
 ```bash
+python train.py  -o ./ --save_tag test --dataset DATASET --path OUTPUT/PATH
+```
+
+For multiple GPUs and SLURM you can use the ```train.sh``` example script
+
+```bash
+#Inside an interactive session run
 ./train.sh
 ```

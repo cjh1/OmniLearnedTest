@@ -15,7 +15,7 @@ class MPFourier(nn.Module):
         y = y.ger(self.freqs.to(torch.float32))
         y = y + self.phases.to(torch.float32)
         y = y.cos() * np.sqrt(2)
-        return x*y.to(x.dtype)
+        return x.unsqueeze(-1)*y.to(x.dtype)
 
 @torch.compile
 def logsnr_schedule_cosine(t, logsnr_min=-20., logsnr_max=20., shift = 1.):
@@ -29,3 +29,11 @@ def get_logsnr_alpha_sigma(time,shift=1.):
     alpha = torch.sqrt(torch.sigmoid(logsnr))
     sigma = torch.sqrt(torch.sigmoid(-logsnr))
     return logsnr, alpha, sigma
+
+
+def perturb(x,mask,time):
+    eps = torch.randn_like(x)  # eps ~ N(0, 1)
+    logsnr, alpha, sigma = get_logsnr_alpha_sigma(time)
+    z = alpha * x + eps * sigma
+    v = alpha*eps - sigma*x
+    return z*mask, v*mask
